@@ -8,8 +8,8 @@ This repository currently contains the backend: the contract, the PostgreSQL rea
 
 | Piece | Status |
 | --- | --- |
-| Rust contract with atomic trades | Written, compiles to wasm |
-| Testnet deployment | Requires a funded testnet account, see below |
+| Rust contract with atomic trades | Live on testnet |
+| Testnet deployment | `city.geniusendy.testnet` |
 | PostgreSQL schema and migrations | Written, applied against a fresh Postgres in tests |
 | Event indexer and projection | Written, replay-safe, covered by `npm run test:db` |
 | Resident worker | Written, deterministic policy |
@@ -28,6 +28,22 @@ Amounts are integers. Credit is denominated in yoctoNEAR.
 - Delivery orders are funded from contract escrow. Completion consumes bread and pays the reward once.
 
 The contract rejects overselling, expired listings, purchases above the caller's price ceiling, self trades, and unaffordable orders.
+
+## Verified on testnet
+
+Contract `city.geniusendy.testnet`, 14 November 2026.
+
+| Step | Transaction |
+| --- | --- |
+| Harvest | `FxYMsWQwQab6FJhYiVJhtGTWdY1FVehJkf3tni9cgUAk` |
+| Listing | `bH237RJfWvLQWN5dixECxsrTnH1xgB4kSHoF2HVE38j` |
+| Atomic buy | `2BzvhmLS7m7BMiNq9Yp9vBhamuTxPmMuswbjSqGiW7gP` |
+| Bake | `AUXzw9LfgUffs7DUq5DGUEoDUxAbJA6qzWrvosNKyguh` |
+| Cart upgrade | `xWDdYFdAPqXGhZ8n4LFY6ck3TitKeayNswxd5tJiMkr` |
+| Order creation | `Ayt9oaZ4WLvmv8wHJkBAr7V86CeKDqWWjyRnpUQ74ZFQ` |
+| Delivery | `4hpiWVKoNQCFKdioCt5prX744ABZxVr3TJ7C5qdt1FT5` |
+
+The same run rejected an oversell and a purchase above the caller's price ceiling, paid a delivery once, and returned the original amount without a second charge when the buy and delivery operation ids were replayed.
 
 ## Architecture
 

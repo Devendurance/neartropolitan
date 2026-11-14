@@ -1,18 +1,25 @@
-import { actions } from "near-api-js";
+import { Account, actions } from "near-api-js";
 import {
   call,
+  env,
+  provider,
   expectFailure,
   fmt,
   near,
   ownerAccount,
   randomImplicitAccount,
   view,
+  CONTRACT_ID,
 } from "./lib/near.mjs";
 
 const log = (label, value) => console.log(`${label}: ${value}`);
 
-async function fund(owner, accountId, amountNear = 0.5) {
-  await owner.signAndSendTransaction({
+async function fund(accountId, amountNear = 0.3) {
+  const funder =
+    env.NEAR_DEPLOYER_ID && env.NEAR_DEPLOYER_PRIVATE_KEY
+      ? new Account(env.NEAR_DEPLOYER_ID, provider, env.NEAR_DEPLOYER_PRIVATE_KEY)
+      : ownerAccount();
+  await funder.signAndSendTransaction({
     receiverId: accountId,
     waitUntil: "FINAL",
     actions: [actions.transfer(near(amountNear))],
@@ -30,8 +37,8 @@ async function main() {
   console.log(`alice ${alice.accountId}`);
   console.log(`bob   ${bob.accountId}`);
 
-  await fund(owner, alice.accountId);
-  await fund(owner, bob.accountId);
+  await fund(alice.accountId);
+  await fund(bob.accountId);
   await call(owner, "grant_starter", { account_id: alice.accountId });
   await call(owner, "grant_starter", { account_id: bob.accountId });
 
@@ -164,9 +171,16 @@ async function main() {
   log("stats after", JSON.stringify(statsAfter));
 
   const aliceEnd = await view("get_account", { account_id: alice.accountId });
+  const ownerEnd = await view("get_account", { account_id: CONTRACT_ID });
   const creditTotal =
-    BigInt(aliceEnd.credit) + BigInt(bobAfterReplay.credit) + BigInt(statsAfter.escrow);
+    BigInt(aliceEnd.credit) +
+    BigInt(bobAfterReplay.credit) +
+    BigInt(ownerEnd.credit) +
+    BigInt(statsAfter.escrow);
   const expectedTotal = BigInt(statsAfter.total_deposited) + 2n * near(0.05);
+  if (creditTotal !== expectedTotal) {
+    throw new Error(`conservation mismatch ${creditTotal} != ${expectedTotal}`);
+  }
   log("credit + escrow", fmt(creditTotal));
   log("deposited + starter", fmt(expectedTotal));
   log("wheat alice", aliceEnd.wheat);

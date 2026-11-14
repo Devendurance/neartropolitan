@@ -37,7 +37,11 @@ function writeEnv(values) {
 
 async function accountExists(provider, accountId) {
   try {
-    await provider.viewAccount(accountId);
+    await provider.sendJsonRpc("query", {
+      request_type: "view_account",
+      finality: "final",
+      account_id: accountId,
+    });
     return true;
   } catch {
     return false;
@@ -96,7 +100,13 @@ async function main() {
     console.log(`contract ${contractId}`);
 
     const deployer = new Account(deployerId, provider, deployerKey);
-    const balance = await provider.viewAccount(deployerId).catch(() => null);
+    const balance = await provider
+      .sendJsonRpc("query", {
+        request_type: "view_account",
+        finality: "final",
+        account_id: deployerId,
+      })
+      .catch(() => null);
     console.log(`deployer balance ${balance ? Number(balance.amount) / 1e24 : 0} NEAR`);
 
     if (!(await accountExists(provider, contractId))) {

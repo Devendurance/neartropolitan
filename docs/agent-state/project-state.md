@@ -1,7 +1,7 @@
 # Project state
 
 - Project: neartropolitan. Backend-first NEAR testnet city economy.
-- Contract: `contracts/city` (Rust, near-sdk 5.30). Builds to wasm with `--cfg near`.
+- Contract: `contracts/city` (Rust, near-sdk 5.30), live at `city.geniusendy.testnet`. Builds to wasm with `--cfg near`.
   Methods: deposit, grant_starter, set_paused, harvest, bake, upgrade_cart,
   create_listing, cancel_listing, buy, create_order, accept_order,
   complete_order, plus views and stats.
