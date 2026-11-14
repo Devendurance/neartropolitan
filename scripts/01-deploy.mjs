@@ -1,12 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  Account,
-  JsonRpcProvider,
-  KeyPair,
-  actions,
-} from "near-api-js";
+import { Account, JsonRpcProvider, KeyPair, actions } from "near-api-js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ENV_PATH = path.join(ROOT, ".env.local");
@@ -14,7 +9,7 @@ const WASM_PATH = path.join(
   ROOT,
   "contracts/city/target/wasm32-unknown-unknown/release/city.wasm",
 );
-const RPC_URL = process.env.NEAR_RPC_URL ?? "https://test.rpc.fastnear.com";
+const RPC_URL = "https://test.rpc.fastnear.com";
 const FAUCET_URL =
   process.env.NEAR_FAUCET_URL ?? "https://helper.testnet.near.org/account";
 const FRESH = process.argv.includes("--fresh");
@@ -32,10 +27,12 @@ function readEnv() {
 function writeEnv(values) {
   const current = readEnv();
   Object.assign(current, values);
-  const body = Object.entries(current)
-    .map(([key, value]) => `${key}=${value}`)
-    .join("\n");
-  fs.writeFileSync(ENV_PATH, `${body}\n`);
+  fs.writeFileSync(
+    ENV_PATH,
+    `${Object.entries(current)
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n")}\n`,
+  );
 }
 
 async function accountExists(provider, accountId) {
@@ -49,18 +46,14 @@ async function accountExists(provider, accountId) {
 
 async function contractResponds(provider, accountId) {
   try {
-    await provider.callFunction({
-      contractId: accountId,
-      method: "get_stats",
-      args: {},
-    });
+    await provider.callFunction({ contractId: accountId, method: "get_stats", args: {} });
     return true;
   } catch {
     return false;
   }
 }
 
-async function waitFor(fn, attempts = 30) {
+async function waitFor(fn, attempts = 40) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (await fn()) return true;
     await new Promise((resolve) => setTimeout(resolve, 1_000));
@@ -68,26 +61,103 @@ async function waitFor(fn, attempts = 30) {
   return false;
 }
 
-async function createViaFaucet(accountId, publicKey) {
-  const response = await fetch(FAUCET_URL, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      newAccountId: accountId,
-      newAccountPublicKey: publicKey,
-    }),
+async function deploy(provider, contractId, signerId, secretKey) {
+  const wasm = fs.readFileSync(WASM_PATH);
+  const account = new Account(signerId, provider, secretKey);
+  console.log(`deploying ${(wasm.length / 1024).toFixed(1)} KiB wasm to ${contractId}`);
+  const result = await account.signAndSendTransaction({
+    receiverId: contractId,
+    waitUntil: "FINAL",
+    actions: [
+      actions.deployContract(new Uint8Array(wasm)),
+      actions.functionCall("new", { owner: contractId }, 100n * 10n ** 12n, 0n),
+    ],
   });
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(`faucet ${response.status}: ${text.slice(0, 300)}`);
+  const status = result.status;
+  if (status && typeof status === "object" && "Failure" in status) {
+    throw new Error(`deploy failed ${JSON.stringify(status)}`);
   }
-  return text;
+  console.log("deploy confirmed");
 }
 
 async function main() {
   const env = readEnv();
   const provider = new JsonRpcProvider({ url: RPC_URL });
 
+  const deployerId = env.NEAR_DEPLOYER_ID;
+  const deployerKey = env.NEAR_DEPLOYER_PRIVATE_KEY;
+
+  // Path 1: a funded named account was provided. Create a readable
+  // sub-account and deploy there.
+  if (deployerId && deployerKey) {
+    const keyPair = KeyPair.fromString(deployerKey);
+    const contractId = env.NEAR_CONTRACT_ID || `city.${deployerId}`;
+    console.log(`deployer ${deployerId}`);
+    console.log(`contract ${contractId}`);
+
+    const deployer = new Account(deployerId, provider, deployerKey);
+    const balance = await provider.viewAccount(deployerId).catch(() => null);
+    console.log(`deployer balance ${balance ? Number(balance.amount) / 1e24 : 0} NEAR`);
+
+    if (!(await accountExists(provider, contractId))) {
+      console.log("creating contract sub-account");
+      await deployer.signAndSendTransaction({
+        receiverId: contractId,
+        waitUntil: "FINAL",
+        actions: [
+          actions.createAccount(),
+          actions.transfer(500_000_000_000_000_000_000_000n),
+          actions.addFullAccessKey(keyPair.getPublicKey()),
+        ],
+      });
+      await waitFor(async () => accountExists(provider, contractId));
+    }
+
+    const already = await contractResponds(provider, contractId);
+    if (already && !FRESH) {
+      console.log("contract already deployed, skipping (use --fresh to redeploy)");
+    } else {
+      if (already) {
+        console.log("existing contract state must be deleted before a fresh deploy");
+        const existing = new Account(contractId, provider, deployerKey);
+        await existing.signAndSendTransaction({
+          receiverId: contractId,
+          waitUntil: "FINAL",
+          actions: [actions.deleteAccount(deployerId)],
+        });
+        await waitFor(async () => !(await accountExists(provider, contractId)));
+        await deployer.signAndSendTransaction({
+          receiverId: contractId,
+          waitUntil: "FINAL",
+          actions: [
+            actions.createAccount(),
+            actions.transfer(500_000_000_000_000_000_000_000n),
+            actions.addFullAccessKey(keyPair.getPublicKey()),
+          ],
+        });
+        await waitFor(async () => accountExists(provider, contractId));
+      }
+      await deploy(provider, contractId, contractId, deployerKey);
+    }
+
+    writeEnv({
+      NEAR_NETWORK: "testnet",
+      NEAR_RPC_URL: RPC_URL,
+      NEAR_ACCOUNT_ID: contractId,
+      NEAR_PRIVATE_KEY: deployerKey,
+      NEAR_PUBLIC_KEY: keyPair.getPublicKey().toString(),
+    });
+    const stats = await provider.callFunction({
+      contractId,
+      method: "get_stats",
+      args: {},
+    });
+    console.log(`stats ${JSON.stringify(stats)}`);
+    return;
+  }
+
+  // Path 2: no named deployer, use the implicit account in .env.local and the
+  // testnet faucet if it is not funded yet.
   const suffix = Math.random().toString(36).slice(2, 7);
   const accountId = env.NEAR_ACCOUNT_ID || `npt-city-${suffix}.testnet`;
   const keyPair = env.NEAR_PRIVATE_KEY
@@ -95,9 +165,6 @@ async function main() {
     : KeyPair.fromRandom("ed25519");
   const secretKey = keyPair.toString();
   const publicKey = keyPair.getPublicKey().toString();
-
-  console.log(`network  testnet (${RPC_URL})`);
-  console.log(`contract ${accountId}`);
 
   writeEnv({
     NEAR_NETWORK: "testnet",
@@ -107,57 +174,25 @@ async function main() {
     NEAR_PUBLIC_KEY: publicKey,
   });
 
-  const deployed = await contractResponds(provider, accountId);
-
-  if (deployed && !FRESH) {
-    console.log("contract already deployed, skipping (use --fresh to redeploy)");
-  } else {
-    if (deployed) {
-      console.log("deleting existing account for a fresh deploy");
-      const account = new Account(accountId, provider, secretKey);
-      await account.signAndSendTransaction({
-        receiverId: accountId,
-        waitUntil: "FINAL",
-        actions: [actions.deleteAccount(accountId)],
-      });
-      await waitFor(async () => !(await accountExists(provider, accountId)));
-    }
-
-    if (!(await accountExists(provider, accountId))) {
-      console.log("creating account via testnet faucet");
-      await createViaFaucet(accountId, publicKey);
-      await waitFor(async () => accountExists(provider, accountId));
-    }
-
-    const account = new Account(accountId, provider, secretKey);
-    const wasm = fs.readFileSync(WASM_PATH);
-    console.log(`deploying ${(wasm.length / 1024).toFixed(1)} KiB wasm`);
-    const result = await account.signAndSendTransaction({
-      receiverId: accountId,
-      waitUntil: "FINAL",
-      actions: [
-        actions.deployContract(new Uint8Array(wasm)),
-        actions.functionCall("new", { owner: accountId }, 100n * 10n ** 12n, 0n),
-      ],
+  const exists = await accountExists(provider, accountId);
+  if (!exists) {
+    console.log("creating account via testnet faucet");
+    const response = await fetch(FAUCET_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ newAccountId: accountId, newAccountPublicKey: publicKey }),
     });
-    if (result.status && "Failure" in result.status) {
-      throw new Error(`deploy failed ${JSON.stringify(result.status)}`);
+    if (!response.ok) {
+      throw new Error(`faucet ${response.status}: ${(await response.text()).slice(0, 200)}`);
     }
-    console.log("deploy confirmed");
+    await waitFor(async () => accountExists(provider, accountId));
   }
 
-  await waitFor(async () => {
-    try {
-      const owner = await provider.callFunction({
-        contractId: accountId,
-        method: "get_owner",
-        args: {},
-      });
-      return owner === accountId;
-    } catch {
-      return false;
-    }
-  });
+  if (await contractResponds(provider, accountId)) {
+    console.log("contract already deployed, skipping (use --fresh to redeploy)");
+  } else {
+    await deploy(provider, accountId, accountId, secretKey);
+  }
 
   const stats = await provider.callFunction({
     contractId: accountId,
