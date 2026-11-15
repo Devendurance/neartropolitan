@@ -3,8 +3,8 @@ config({ path: ".env.local" });
 
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "../db/client";
-import { operations, transactions } from "../db/schema";
-import { nearConfig, isFailure, provider, txStatus } from "../near/client";
+import { transactions } from "../db/schema";
+import { nearConfig } from "../near/client";
 import { confirmTransaction } from "./confirm";
 import { scanBlocks } from "./scan";
 
