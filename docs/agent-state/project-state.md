@@ -1,19 +1,24 @@
 # Project state
 
-- Project: neartropolitan. Backend-first NEAR testnet city economy.
-- Contract: `contracts/city` (Rust, near-sdk 5.30), live at `city.geniusendy.testnet`. Builds to wasm with `--cfg near`.
+- Project: neartropolitan. Backend complete, frontend not started.
+- Contract: `contracts/city` (Rust, near-sdk 5.30), live at
+  `city.geniusendy.testnet`. Builds to wasm with `--cfg near`.
   Methods: deposit, grant_starter, set_paused, harvest, bake, upgrade_cart,
   create_listing, cancel_listing, buy, create_order, accept_order,
   complete_order, plus views and stats.
 - Money is yoctoNEAR. Goods are wheat and bread. Every mutation takes an op id
   and is idempotent.
-- Read model: Drizzle schema in `src/server/db/schema.ts`, migrations in `drizzle/`.
-  Tables: accounts, listings, trades, orders, operations, transactions,
-  residents, ticks, indexer_cursor.
-- Indexer: `src/server/indexing` polls pending transactions to finality and
-  projects `EVENT_JSON` logs. Replay-safe.
-- Worker: `src/server/worker` runs a deterministic resident tick with leases.
-- Auth, HTTP command layer, and frontend are not implemented.
-- Delivery order: both backends before either frontend (AGENTS.md).
-- Platforms: Neon PostgreSQL, GitHub, Vercel. GitHub and Vercel are connected.
-  Neon credentials are not available on this machine yet.
+- Database: Neon project `neartropolitan` (`snowy-rain-49497423`), region
+  aws-us-east-2. Both migrations applied. Runtime uses the pooled URL.
+- API: NEP-413 sign-in with single use nonces, HMAC session cookies, origin
+  checks, and rate limits. Routes in `src/app/api`.
+  - POST /api/auth/challenge, POST /api/auth/verify, GET/DELETE /api/auth/session
+  - GET /api/state, GET /api/history
+  - POST /api/commands, POST /api/transactions
+- Command layer: `src/server/commands/plan.ts` validates actions against live
+  contract state and returns prepared calls. The server never holds player keys.
+- Indexing: pending poller for API submissions plus block scanner for wallet
+  submissions. Both share a replay-safe projector.
+- Worker: deterministic resident tick with database leases.
+- Delivery order: both backends before either frontend. Backend gate passed.
+- Platforms: Neon and GitHub connected. Vercel project not created yet.

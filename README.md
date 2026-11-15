@@ -1,19 +1,29 @@
 # Neartropolitan
 
-A small city economy on NEAR testnet. One player harvests wheat, sells it, buys bread ingredients, bakes, upgrades a cart, and completes delivery orders. Every balance change settles in one authoritative Rust contract.
+A small city economy on NEAR testnet. One player harvests wheat, sells it, buys ingredients, bakes bread, upgrades a cart, and completes delivery orders. Every balance change settles in one authoritative Rust contract.
 
-This repository currently contains the backend: the contract, the PostgreSQL read model, the event indexer, and the resident worker. The city interface is not built yet, per the backend-first delivery rule in `AGENTS.md`.
+The backend is complete: contract, Neon PostgreSQL read model, NEP-413 authenticated API, event indexer, block-scan discovery, and a deterministic resident worker. The city interface is the remaining phase, per the backend-first rule in `AGENTS.md`.
+
+## Live resources
+
+| Resource | Value |
+| --- | --- |
+| Contract | `city.geniusendy.testnet` |
+| Database | Neon project `neartropolitan`, `aws-us-east-2` |
+| Source | https://github.com/Devendurance/neartropolitan |
 
 ## What is real
 
 | Piece | Status |
 | --- | --- |
 | Rust contract with atomic trades | Live on testnet |
-| Testnet deployment | `city.geniusendy.testnet` |
-| PostgreSQL schema and migrations | Written, applied against a fresh Postgres in tests |
-| Event indexer and projection | Written, replay-safe, covered by `npm run test:db` |
-| Resident worker | Written, deterministic policy |
-| Next.js frontend | Starter page only |
+| NEP-413 sign-in and sessions | Implemented, verified end to end |
+| Validated command API | Implemented, verified end to end |
+| PostgreSQL schema and migrations | Applied to Neon |
+| Event indexer and projection | Implemented, replay-safe, verified |
+| Block-scan discovery | Implemented, verified against a wallet transaction |
+| Resident worker | Implemented, deterministic policy |
+| Next.js city interface | Not built yet |
 
 ## Economy rules
 
@@ -49,17 +59,34 @@ The same run rejected an oversell and a purchase above the caller's price ceilin
 
 ```
 contracts/city        Rust contract, authoritative state and EVENT_JSON logs
+src/app/api           Auth, state, history, commands, transaction registration
+src/server/auth       NEP-413 verification and HMAC session cookies
+src/server/commands   Pure action validation and prepared contract calls
 src/server/db         Drizzle schema, migrations, connection
 src/server/near       RPC client, view calls, signed submissions
-src/server/indexing   EVENT_JSON parsing and replay-safe projection
+src/server/indexing   Pending poller, block scanner, replay-safe projection
 src/server/worker     Deterministic resident tick
-scripts/              Deploy, contract smoke test, database test
+scripts/              Deploy, contract smoke, database, auth, API, and scan tests
 drizzle/              Generated SQL migrations
 ```
 
-The contract is authoritative. PostgreSQL is a rebuildable read model. The client never grants inventory.
+The contract is authoritative. PostgreSQL is a rebuildable read model. The server never holds player keys.
 
-Every write is submitted through the server or the worker, so each submission is recorded in `transactions` and polled to finality by the indexer. The indexer parses `EVENT_JSON` logs, writes read models idempotently, and deduplicates trades by transaction hash and event index. Block-scan discovery for transactions submitted outside the server is deferred.
+## HTTP API
+
+| Route | Auth | Purpose |
+| --- | --- | --- |
+| `POST /api/auth/challenge` | none | Issues a NEP-413 nonce and message |
+| `POST /api/auth/verify` | none | Verifies the signature and sets the session cookie |
+| `GET/DELETE /api/auth/session` | cookie | Reads or clears the session |
+| `GET /api/state` | none | Live contract state plus indexer position |
+| `GET /api/history` | cookie | Confirmed trades and operations for the caller |
+| `POST /api/commands` | cookie | Validates an action and returns a prepared contract call |
+| `POST /api/transactions` | cookie | Queues a wallet-submitted transaction for confirmation |
+
+Sign-in verifies the ed25519 signature, then checks on chain that the key still has FullAccess. The server returns the exact contract call for the wallet to sign, so custody stays with the player.
+
+Full details are in [docs/BACKEND.md](docs/BACKEND.md).
 
 ## Setup
 
@@ -67,7 +94,7 @@ Every write is submitted through the server or the worker, so each submission is
 npm install
 cp .env.example .env.local   # then fill in values
 npm run db:generate          # after any schema change
-npm run db:migrate           # applies migrations to DATABASE_URL
+npm run db:migrate           # applies migrations to DATABASE_URL_DIRECT
 ```
 
 Environment variables:
@@ -78,21 +105,31 @@ Environment variables:
 | `NEAR_RPC_URL` | Defaults to `https://test.rpc.fastnear.com` |
 | `NEAR_ACCOUNT_ID` | Contract account |
 | `NEAR_PRIVATE_KEY` | Owner key, used for starter grants and orders |
-| `DATABASE_URL` | Neon pooled connection string |
+| `NEAR_DEPLOYER_ID` | Named account that creates the contract sub-account |
+| `NEAR_DEPLOYER_PRIVATE_KEY` | Deployer key |
+| `DATABASE_URL` | Neon pooled connection string, used at runtime |
+| `DATABASE_URL_DIRECT` | Neon direct connection string, used by migrations |
+| `AUTH_SECRET` | At least 32 characters, signs session cookies |
+| `NEAR_AUTH_RECIPIENT` | NEP-413 recipient, defaults to `neartropolitan` |
 | `NEAR_RESIDENT_KEYS` | JSON map of resident account id to secret key |
 | `WORKER_ID` | Lease owner for the worker |
 
 ## Commands
 
 ```bash
-npm run deploy:contract   # deploy wasm to NEAR_ACCOUNT_ID
+npm run deploy:contract   # deploy wasm to the contract sub-account
 npm run smoke:contract    # full economy check against testnet
-npm run test:db           # migrations and projection against PGlite
-npm run indexer           # poll pending transactions to finality
-npm run worker -- --once  # one deterministic resident tick
+npm run test              # database projection and command validation
+npm run test:api          # end to end auth, command, indexer, history
+npm run test:scan         # external transaction discovery
+npm run indexer           # pending poller plus block scanner
+npm run indexer:once      # a single indexing pass
+npm run worker:once       # one deterministic resident tick
 npm run seed              # register residents and grant starters
 npm run lint && npx tsc --noEmit && npx next build
 ```
+
+`test:api` expects the app on `http://127.0.0.1:3100` by default. Set `API_BASE` to override. Both integration tests use the funded testnet account in `.env.local`.
 
 ## Contract build note
 
@@ -103,14 +140,12 @@ cargo build --manifest-path contracts/city/Cargo.toml \
   --target wasm32-unknown-unknown --release
 ```
 
-## Verification
-
-- `npm run test:db` applies the generated migrations to a fresh Postgres and checks projection, deduplication, and replay.
-- `npm run smoke:contract` exercises harvest, listing, oversell rejection, price ceiling rejection, purchase, baking, cart upgrade, order acceptance, delivery, and duplicate operation replay against testnet.
-- `npm run lint`, `npx tsc --noEmit`, and `npx next build` pass.
-
 ## Status and limitations
 
-Withdrawals are intentionally not implemented. Credit is held by the contract and there is no exit path yet, which is disclosed rather than hidden. Authentication, the HTTP command layer, and the city interface are next. The contract has not been audited. The resident worker runs as a plain process and should move to a scheduled or queued runtime before any real deployment.
+Withdrawals are intentionally not implemented. Credit is held by the contract and there is no exit path yet, which is disclosed rather than hidden. The contract has not been audited.
+
+The indexer and worker run as plain processes. Before a real deployment they should move to a scheduled or queued runtime with the same leases and idempotency keys. The block scanner fetches every chunk per block, so it is sized for low volume.
+
+The city interface is next. `docs/DESIGN.md` must be established first, then the neighborhood, building actions, inventory, and bank history connect to this API without moving authoritative rules into the browser.
 
 See `docs/` for the PRD, technical requirements, architecture, and delivery plan.

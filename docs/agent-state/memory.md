@@ -10,27 +10,33 @@
 - near-sdk 5.30 needs `--cfg near` for wasm builds. Without it the host-call
   shims fall back to local stubs, `panic_str` disappears, and every failure
   becomes a bare `unreachable` trap with no logs. Set in `.cargo/config.toml`.
-- u128 struct fields are serialized as decimal strings. Method parameters and
-  return values use `near_sdk::json_types::U128` so JavaScript never loses
-  precision above 2^53.
-- `near_sdk::require!` takes a single message argument. Use `format!` when the
-  message needs values.
-- Do not delete the only funded testnet account. The official faucet is IP rate
-  limited (12 hours per batch), so recovery is not immediate.
+- u128 struct fields are decimal strings. Parameters and returns use
+  `near_sdk::json_types::U128`.
+- `near_sdk::require!` takes a single message argument. Use `format!` for values.
+- Do not delete the only funded testnet account. The faucet is IP rate limited
+  for 12 hours.
 
-## Infrastructure gotchas
+## Web and API gotchas
 
-- `rpc.testnet.near.org` is deprecated and returns 429. Use
-  `https://test.rpc.fastnear.com`.
-- `near-api-js` 7 uses `new Account(id, provider, secret)` and object-form
-  `provider.callFunction({ contractId, method, args })`. `connect` and
-  `keyStores` no longer exist.
-- `.env.local` is gitignored. `.env.example` is force-included.
+- Next 16 has `cacheComponents: true` in `next.config.ts`. Route segment configs
+  (`runtime`, `dynamic`, `revalidate`) are rejected. Do not add them.
+- `near-api-js` 7 uses object-form `provider.callFunction({ contractId, method, args })`
+  and `new Account(id, provider, secret)`. `KeyPair.sign` returns
+  `{ signature, publicKey }`, not raw bytes.
+- NEP-413 wire format: u32 prefix 2147484061, borsh struct
+  `{message, nonce[32], recipient, callbackUrl?}`, then sha256. Verify the
+  signature and also query `view_access_key` to confirm FullAccess.
+- The `block` RPC omits transaction lists on testnet. Use `chunk` with
+  `chunk_hash` to read transactions. Scanning all chunks costs ten calls per
+  block, so keep the per-cycle block cap low.
+- Neon credentials live in `~/.config/neon/credentials.vps.json`. Use the API
+  key with `npx neonctl`. Runtime uses the pooled connection string.
 - Vercel team: `endy-s-winning-szn`. GitHub account: `Devendurance`.
 
 ## Verification
 
-- `npm run test:db` runs migrations and projection against PGlite. It caught a
-  real replay bug: deduplicating a trade row is not enough, the listing
-  decrement needs the insert guard too.
-- `npm run smoke:contract` is the testnet end-to-end check.
+- `npm test` runs migrations and projection against PGlite plus auth and
+  command validation.
+- `npm run test:api` is the end to end check. It needs the app running and the
+  funded testnet account.
+- `npm run test:scan` proves external transaction discovery.

@@ -24,6 +24,52 @@ Views: `get_account`, `get_listing`, `get_listings(offset, limit)`, `get_order`,
 
 Amounts are decimal strings in JSON. `u128` parameters use the `U128` wrapper so JavaScript clients keep exact values.
 
+## HTTP API
+
+Cookie sessions are issued after a NEP-413 signature and a chain check that the signing key still has full access to the account.
+
+| Route | Auth | Purpose |
+| --- | --- | --- |
+| `POST /api/auth/challenge` | none | Issues a 32 byte nonce, recipient, and message |
+| `POST /api/auth/verify` | none | Verifies the signature and sets the session cookie |
+| `GET /api/auth/session` | cookie | Returns the signed-in account |
+| `DELETE /api/auth/session` | cookie | Clears the cookie |
+| `GET /api/state` | none | Live contract state plus indexer position |
+| `GET /api/history` | cookie | Confirmed trades and operations for the caller |
+| `POST /api/commands` | cookie | Validates an action and returns a prepared contract call |
+| `POST /api/transactions` | cookie | Queues a wallet-submitted transaction for confirmation |
+
+### Sign-in flow
+
+1. Client requests a challenge for its account id.
+2. Wallet signs the NEP-413 payload over `message`, `nonce`, and `recipient`.
+3. Server checks the nonce is unused and unexpired, verifies the ed25519 signature, then queries `view_access_key` to confirm the key has FullAccess.
+4. Server marks the challenge used and sets an HMAC-signed, HttpOnly session cookie.
+
+Challenges last five minutes and are single use. Sessions last seven days. Mutating requests without an `Origin`, or with a mismatched one, are rejected.
+
+### Command flow
+
+The server never holds player keys. `POST /api/commands` reads live contract state, validates the action against the same rules the contract enforces, and returns:
+
+```json
+{
+  "call": {
+    "contractId": "city.geniusendy.testnet",
+    "method": "buy",
+    "args": { "listing_id": 1, "quantity": "2", "max_unit_price": "1000", "op_id": "..." },
+    "gas": "30000000000000",
+    "deposit": "0"
+  },
+  "operationId": "...",
+  "summary": "Buy 2 wheat for 2000 yocto"
+}
+```
+
+The wallet signs and sends that call. The client then posts the transaction hash to `/api/transactions`, which queues it for the indexer and records the operation as pending.
+
+Validation is advisory. The contract remains authoritative, so a stale read can never grant goods or money.
+
 ## Events
 
 Each confirmed log line is `EVENT_JSON:` followed by:
@@ -34,7 +80,14 @@ Each confirmed log line is `EVENT_JSON:` followed by:
 
 Events: `deposit`, `starter`, `harvest`, `bake`, `upgrade`, `listing_created`, `listing_cancelled`, `trade`, `order_created`, `order_accepted`, `order_completed`, `paused`.
 
-The indexer only trusts events from the contract receipt and records each `(tx hash, event index)` once.
+## Indexing
+
+Two paths feed the read model:
+
+- **Pending poller.** Every transaction registered through `/api/transactions` sits in `transactions` as pending and is polled to finality.
+- **Block scanner.** Wallet transactions that skip the API are discovered by scanning finalized blocks. The block endpoint omits transaction lists, so each chunk is fetched and filtered by receiver. This runs on the same loop as the poller.
+
+Both paths share one projector. Trades are deduplicated by `(tx hash, event index)`, and the insert guard also gates the listing decrement, so replay cannot move inventory twice. Confirmed transactions also update their operation row to confirmed with the settled amount.
 
 ## Tables
 
@@ -44,26 +97,17 @@ The indexer only trusts events from the contract receipt and records each `(tx h
 | `listings` | Open and historical listings |
 | `trades` | Confirmed trades, unique per transaction and event index |
 | `orders` | Delivery orders and assignment |
-| `operations` | Operation ids with their confirmed amount |
+| `operations` | Operation ids, status, and confirmed amount |
 | `transactions` | Submission queue polled to finality |
 | `residents` | NPC policy, price ceiling, spend limit |
 | `ticks` | Worker lease and decision count |
-| `indexer_cursor` | Last projected block per contract |
-
-## Write path
-
-1. Server or worker signs a contract call and records it in `transactions` as pending.
-2. Indexer polls `tx` until the receipt is final.
-3. For a successful receipt, each `EVENT_JSON` log is applied inside one database transaction per event.
-4. Account rows are refreshed from contract views, so the read model never drifts from authoritative state.
-5. Failed receipts are stored with their error and never projected.
-
-Trade rows carry a unique constraint on `(tx_hash, event_index)`. The insert guard also gates the listing decrement, which is what makes replay safe.
+| `auth_challenges` | Single use NEP-413 nonces |
+| `indexer_cursor` | Last scanned block per network |
 
 ## Escrow accounting
 
-Credit in circulation equals `total_deposited` plus starter grants minus cart spend moved to escrow, minus delivery rewards paid from escrow. Cart purchases and delivery rewards both touch `escrow`, so the contract never pays a reward it cannot fund. Withdrawals are not implemented and that is disclosed.
+Credit in circulation equals `total_deposited` plus starter grants, minus cart spend moved to escrow, minus delivery rewards paid from escrow. Cart purchases and delivery rewards both touch `escrow`, so the contract never pays a reward it cannot fund. Withdrawals are not implemented and that is disclosed.
 
 ## Deferred
 
-Authentication, the HTTP command layer, block-scan discovery for external transactions, withdrawal recovery, and the city interface.
+Withdrawals and withdrawal recovery, a durable queue for the worker, and the city interface. The worker currently runs as a plain process with database leases.

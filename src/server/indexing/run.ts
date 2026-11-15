@@ -3,9 +3,10 @@ config({ path: ".env.local" });
 
 import { eq } from "drizzle-orm";
 import { getDb } from "../db/client";
-import { transactions } from "../db/schema";
+import { operations, transactions } from "../db/schema";
 import { nearConfig, isFailure, provider, txStatus } from "../near/client";
 import { applyEvent, parseEvents } from "./project";
+import { scanBlocks } from "./scan";
 
 const ONCE = process.argv.includes("--once");
 const POLL_MS = Number(process.env.INDEXER_POLL_MS ?? 3000);
@@ -56,6 +57,14 @@ export async function indexOnce() {
 
       const failed = isFailure(status.status);
       await db
+        .update(operations)
+        .set({
+          status: failed ? "failed" : "confirmed",
+          blockHeight,
+          ...(failed ? {} : {}),
+        })
+        .where(eq(operations.txHash, tx.txHash));
+      await db
         .update(transactions)
         .set({
           status: failed ? "failed" : "confirmed",
@@ -85,8 +94,11 @@ async function main() {
   console.log(`indexer starting (${ONCE ? "single pass" : "polling"})`);
   do {
     const result = await indexOnce();
+    const scan = await scanBlocks();
     console.log(
-      `indexer scanned=${result.scanned} events=${result.applied} at=${new Date().toISOString()}`,
+      `indexer pending=${result.scanned} projected=${result.applied} ` +
+        `blocks=${scan.scannedTo}/${scan.latest} external=${scan.transactions} ` +
+        `external_events=${scan.events} at=${new Date().toISOString()}`,
     );
     if (!ONCE) await new Promise((resolve) => setTimeout(resolve, POLL_MS));
   } while (!ONCE);

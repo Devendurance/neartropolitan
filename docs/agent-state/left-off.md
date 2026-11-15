@@ -1,17 +1,15 @@
 # Left off
 
-- Current task: finish the Neartropolitan backend and verify the full economy
-  on NEAR testnet.
-- Done: Rust contract with atomic settlement and idempotent operations, deployed
-  to `city.geniusendy.testnet`. Drizzle schema and migrations, replay-safe event
-  indexer, deterministic resident worker, seed script, deploy and smoke scripts,
-  README, lint, typecheck, build, and database projection tests.
-- Verified: `npm run test:db` passes. `npx tsc --noEmit`, `eslint .`, and
-  `next build` pass. `npm run smoke:contract` passed on testnet against
-  `city.geniusendy.testnet`, including oversell rejection, price ceiling
-  rejection, atomic buy, bake, cart upgrade, delivery payout, duplicate replay,
-  and the credit conservation check. Transaction hashes are in the README.
-- Next: provision Neon, run `db:migrate`, add the authenticated HTTP command
-  layer, then start the frontend.
-- Blocker: Neon `DATABASE_URL` is missing, so migrations have not run against a
-  managed Postgres. The read model is verified against PGlite only.
+- Current task: backend complete, frontend is next.
+- Done: contract deployed to `city.geniusendy.testnet`, Neon provisioned with
+  both migrations applied, NEP-413 auth, session cookies, validated command API,
+  history and state routes, pending indexer, block scanner, and resident worker.
+- Verified: `npm test` (projection, auth, 24 command checks), `npm run test:api`
+  (17 checks, real testnet harvest through the read model), `npm run test:scan`
+  (5 checks, external deposit discovered and projected), `npm run smoke:contract`
+  (full economy on testnet). Lint, typecheck, and production build pass.
+- Next: write `docs/DESIGN.md`, then build the city interface against this API.
+  Create the Vercel project and set runtime environment variables.
+- Blockers: none. Withdrawals and the worker runtime are deferred by design.
+- Note: the API and integration tests need the funded `geniusendy.testnet` key
+  in `.env.local`. Never commit it.

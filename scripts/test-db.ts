@@ -14,7 +14,7 @@ function assert(condition: unknown, message: string) {
   console.log(`  ok  ${message}`);
 }
 
-const snapshot = (id: string): AccountSnapshot => ({
+const snapshot = (): AccountSnapshot => ({
   credit: "1000",
   wheat: "2",
   bread: "1",
@@ -42,7 +42,7 @@ async function main() {
     txHash: "tx-1",
     blockHeight: 42,
     eventIndex: 0,
-    refreshAccount: async (id: string) => snapshot(id),
+    refreshAccount: async () => snapshot(),
   };
 
   const created = parseEvents([

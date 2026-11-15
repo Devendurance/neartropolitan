@@ -16,10 +16,17 @@
     "worker": "tsx src/server/worker/run.ts",
     "deploy:contract": "node scripts/01-deploy.mjs",
     "smoke:contract": "node scripts/02-smoke.mjs",
-    "test:db": "tsx scripts/test-db.ts"
+    "test:db": "tsx scripts/test-db.ts",
+    "test:backend": "tsx scripts/test-backend.ts",
+    "test": "npm run test:db && npm run test:backend",
+    "indexer:once": "tsx src/server/indexing/run.ts --once",
+    "worker:once": "tsx src/server/worker/run.ts --once",
+    "test:api": "tsx scripts/test-api.ts",
+    "test:scan": "tsx scripts/test-scan.ts"
   },
   "dependencies": {
     "@gsap/react": "^2.1.2",
+    "borsh": "^2.0.0",
     "dotenv": "^18.0.10",
     "drizzle-orm": "^0.45.4",
     "gsap": "^3.15.1",

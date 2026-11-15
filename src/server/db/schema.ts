@@ -142,6 +142,23 @@ export const ticks = pgTable(
   (table) => [index("ticks_lease_idx").on(table.status, table.leaseUntil)],
 );
 
+export const authChallenges = pgTable(
+  "auth_challenges",
+  {
+    nonce: text("nonce").primaryKey(),
+    accountId: text("account_id").notNull(),
+    recipient: text("recipient").notNull(),
+    message: text("message").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("auth_challenges_account_idx").on(table.accountId),
+    index("auth_challenges_expiry_idx").on(table.expiresAt),
+  ],
+);
+
 export const indexerCursor = pgTable("indexer_cursor", {
   network: text("network").primaryKey(),
   contractId: text("contract_id").notNull(),

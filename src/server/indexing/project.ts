@@ -1,6 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { accounts, listings, orders, trades } from "../db/schema";
+import { accounts, listings, operations, orders, trades } from "../db/schema";
 import { getAccount } from "../near/client";
 
 export type CityEvent = {
@@ -138,6 +138,10 @@ export async function applyEvent(context: EventContext, event: CityEvent) {
           .where(eq(listings.listingId, listingId));
       }
       await touchAccounts(db, [text(data.buyer), text(data.seller)], context.refreshAccount);
+      await db
+        .update(operations)
+        .set({ amount: text(data.total) })
+        .where(and(eq(operations.txHash, context.txHash), eq(operations.kind, "buy")));
       break;
     }
 
@@ -220,14 +224,47 @@ export async function applyEvent(context: EventContext, event: CityEvent) {
         .set({ status: "completed", updatedAt: new Date() })
         .where(eq(orders.orderId, num(data.order_id)));
       await touchAccounts(db, [text(data.assignee)], context.refreshAccount);
+      await db
+        .update(operations)
+        .set({ amount: text(data.reward) })
+        .where(
+          and(
+            eq(operations.txHash, context.txHash),
+            eq(operations.kind, "complete_order"),
+          ),
+        );
+      break;
+    }
+
+    case "harvest": {
+      await touchAccounts(db, [text(data.account)], context.refreshAccount);
+      await db
+        .update(operations)
+        .set({ amount: text(data.wheat) })
+        .where(and(eq(operations.txHash, context.txHash), eq(operations.kind, "harvest")));
+      break;
+    }
+
+    case "bake": {
+      await touchAccounts(db, [text(data.account)], context.refreshAccount);
+      await db
+        .update(operations)
+        .set({ amount: text(data.bread) })
+        .where(and(eq(operations.txHash, context.txHash), eq(operations.kind, "bake")));
+      break;
+    }
+
+    case "upgrade": {
+      await touchAccounts(db, [text(data.account)], context.refreshAccount);
+      await db
+        .update(operations)
+        .set({ amount: text(data.cart_capacity) })
+        .where(and(eq(operations.txHash, context.txHash), eq(operations.kind, "upgrade")));
       break;
     }
 
     case "deposit":
-    case "starter":
-    case "harvest":
-    case "bake":
-    case "upgrade": {
+    case "starter": {
       await touchAccounts(db, [text(data.account)], context.refreshAccount);
       break;
     }
