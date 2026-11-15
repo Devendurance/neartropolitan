@@ -9,6 +9,7 @@ The backend is complete: contract, Neon PostgreSQL read model, NEP-413 authentic
 | Resource | Value |
 | --- | --- |
 | Contract | `city.geniusendy.testnet` |
+| API | https://neartropolitan.vercel.app |
 | Database | Neon project `neartropolitan`, `aws-us-east-2` |
 | Source | https://github.com/Devendurance/neartropolitan |
 
@@ -21,7 +22,7 @@ The backend is complete: contract, Neon PostgreSQL read model, NEP-413 authentic
 | Validated command API | Implemented, verified end to end |
 | PostgreSQL schema and migrations | Applied to Neon |
 | Event indexer and projection | Implemented, replay-safe, verified |
-| Block-scan discovery | Implemented, verified against a wallet transaction |
+| Block-scan discovery | Implemented, shard-aware, verified against a wallet transaction |
 | Resident worker | Implemented, deterministic policy |
 | Next.js city interface | Not built yet |
 
@@ -82,7 +83,7 @@ The contract is authoritative. PostgreSQL is a rebuildable read model. The serve
 | `GET /api/state` | none | Live contract state plus indexer position |
 | `GET /api/history` | cookie | Confirmed trades and operations for the caller |
 | `POST /api/commands` | cookie | Validates an action and returns a prepared contract call |
-| `POST /api/transactions` | cookie | Queues a wallet-submitted transaction for confirmation |
+| `POST /api/transactions` | cookie | Confirms a wallet transaction inline, with the indexer as backstop |
 
 Sign-in verifies the ed25519 signature, then checks on chain that the key still has FullAccess. The server returns the exact contract call for the wallet to sign, so custody stays with the player.
 
@@ -144,7 +145,7 @@ cargo build --manifest-path contracts/city/Cargo.toml \
 
 Withdrawals are intentionally not implemented. Credit is held by the contract and there is no exit path yet, which is disclosed rather than hidden. The contract has not been audited.
 
-The indexer and worker run as plain processes. Before a real deployment they should move to a scheduled or queued runtime with the same leases and idempotency keys. The block scanner fetches every chunk per block, so it is sized for low volume.
+The indexer and worker run as plain processes. The Vercel team is on the Hobby plan, which only allows daily cron, so a per minute scheduler was not an option. Player actions confirm inline in the API, and the indexer backstop handles retries plus wallet submissions. The worker still needs a process with a durable lease. Before a real deployment both should move to a supported scheduled or queued runtime.
 
 The city interface is next. `docs/DESIGN.md` must be established first, then the neighborhood, building actions, inventory, and bank history connect to this API without moving authoritative rules into the browser.
 

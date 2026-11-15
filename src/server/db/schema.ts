@@ -163,6 +163,8 @@ export const indexerCursor = pgTable("indexer_cursor", {
   network: text("network").primaryKey(),
   contractId: text("contract_id").notNull(),
   lastBlockHeight: bigint("last_block_height", { mode: "number" }).notNull().default(0),
+  contractShard: integer("contract_shard"),
+  epochId: text("epoch_id"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

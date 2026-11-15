@@ -8,6 +8,8 @@ import {
   type CommandAction,
 } from "@/server/commands/plan";
 import { errorResponse, rateLimit, requireSession } from "@/server/http/guard";
+import { confirmTransaction } from "@/server/indexing/confirm";
+import { nearConfig } from "@/server/near/client";
 
 
 const TX_HASH = /^[1-9A-HJ-NP-Za-km-z]{43,44}$/;
@@ -82,7 +84,27 @@ export async function POST(request: Request) {
       })
       .onConflictDoNothing();
 
-    return NextResponse.json({ tracked: true, txHash }, { status: 202 });
+    // The wallet already waited for inclusion, so confirm inline when the
+    // node can see it. The indexer retries anything that is not visible yet.
+    let confirmed = false;
+    let failed = false;
+    try {
+      const result = await confirmTransaction(
+        db,
+        txHash,
+        session.accountId,
+        nearConfig().contractId,
+      );
+      confirmed = true;
+      failed = result.failed;
+    } catch {
+      confirmed = false;
+    }
+
+    return NextResponse.json(
+      { tracked: true, txHash, confirmed, failed },
+      { status: 202 },
+    );
   } catch (error) {
     return errorResponse(error);
   }

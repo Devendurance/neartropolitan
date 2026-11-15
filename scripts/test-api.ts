@@ -80,6 +80,12 @@ async function main() {
   console.log("commands");
   const before = await json(`/api/state?accountId=${accountId}`);
   const wheatBefore = BigInt(before.body.account.wheat);
+  const readyAt = Number(before.body.account.harvest_ready_at);
+  if (readyAt > Date.now()) {
+    const wait = readyAt - Date.now() + 1_000;
+    console.log(`  ..  waiting ${Math.ceil(wait / 1000)}s for harvest cooldown`);
+    await new Promise((resolve) => setTimeout(resolve, wait));
+  }
 
   const command = await json("/api/commands", {
     method: "POST",
@@ -126,9 +132,10 @@ async function main() {
     }),
   });
   ok(tracked.status === 202, "transaction registered for indexing");
+  ok(tracked.body.confirmed === true, "transaction confirmed inline");
 
-  const indexed = await indexOnce();
-  ok(indexed.scanned >= 1, "indexer picked up the transaction");
+  await indexOnce();
+  ok(true, "indexer backstop runs without error");
 
   const after = await json(`/api/state?accountId=${accountId}`);
   const wheatAfter = BigInt(after.body.account.wheat);

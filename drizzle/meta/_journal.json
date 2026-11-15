@@ -15,6 +15,13 @@
       "when": 1794700325885,
       "tag": "0001_curvy_doorman",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794701445267,
+      "tag": "0002_sad_vermin",
+      "breakpoints": true
     }
   ]
 }

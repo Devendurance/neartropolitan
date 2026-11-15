@@ -1,25 +1,31 @@
 import { config } from "dotenv";
 config({ path: ".env.local" });
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getDb } from "../db/client";
 import { operations, transactions } from "../db/schema";
 import { nearConfig, isFailure, provider, txStatus } from "../near/client";
-import { applyEvent, parseEvents } from "./project";
+import { confirmTransaction } from "./confirm";
 import { scanBlocks } from "./scan";
 
 const ONCE = process.argv.includes("--once");
 const POLL_MS = Number(process.env.INDEXER_POLL_MS ?? 3000);
 
-async function blockHeightOf(blockHash: string): Promise<number> {
-  try {
-    const block = (await provider().sendJsonRpc("block", {
-      block_id: blockHash,
-    })) as { header?: { height?: number } };
-    return block.header?.height ?? 0;
-  } catch {
-    return 0;
-  }
+/**
+ * Self healing pass. If the process dies between confirming a transaction and
+ * updating its operation row, this closes the gap on the next run.
+ */
+export async function reconcileOperations() {
+  const db = getDb();
+  await db.execute(sql`
+    update operations o
+    set status = t.status,
+        block_height = t.block_height
+    from transactions t
+    where o.tx_hash = t.tx_hash
+      and o.status = 'pending'
+      and t.status in ('confirmed', 'failed')
+  `);
 }
 
 export async function indexOnce() {
@@ -35,44 +41,8 @@ export async function indexOnce() {
 
   for (const tx of pending) {
     try {
-      const status = await txStatus(tx.txHash, tx.signerId);
-      const blockHeight = status.transaction_outcome
-        ? await blockHeightOf(status.transaction_outcome.block_hash)
-        : 0;
-
-      let eventIndex = 0;
-      for (const receipt of status.receipts_outcome ?? []) {
-        if (receipt.receipt?.receiver_id && receipt.receipt.receiver_id !== contractId) {
-          continue;
-        }
-        for (const event of parseEvents(receipt.outcome.logs ?? [])) {
-          await applyEvent(
-            { db, txHash: tx.txHash, blockHeight, eventIndex },
-            event,
-          );
-          applied += 1;
-          eventIndex += 1;
-        }
-      }
-
-      const failed = isFailure(status.status);
-      await db
-        .update(operations)
-        .set({
-          status: failed ? "failed" : "confirmed",
-          blockHeight,
-          ...(failed ? {} : {}),
-        })
-        .where(eq(operations.txHash, tx.txHash));
-      await db
-        .update(transactions)
-        .set({
-          status: failed ? "failed" : "confirmed",
-          blockHeight,
-          resolvedAt: new Date(),
-          lastError: failed ? JSON.stringify(status.status).slice(0, 500) : null,
-        })
-        .where(eq(transactions.txHash, tx.txHash));
+      const result = await confirmTransaction(db, tx.txHash, tx.signerId, contractId);
+      applied += result.events;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const notFound = /UNKNOWN_TRANSACTION|does not exist|Not found/i.test(message);
@@ -93,11 +63,12 @@ export async function indexOnce() {
 async function main() {
   console.log(`indexer starting (${ONCE ? "single pass" : "polling"})`);
   do {
+    await reconcileOperations();
     const result = await indexOnce();
     const scan = await scanBlocks();
     console.log(
       `indexer pending=${result.scanned} projected=${result.applied} ` +
-        `blocks=${scan.scannedTo}/${scan.latest} external=${scan.transactions} ` +
+        `blocks=${scan.scannedTo}/${scan.latest} shard=${scan.shard} external=${scan.transactions} ` +
         `external_events=${scan.events} at=${new Date().toISOString()}`,
     );
     if (!ONCE) await new Promise((resolve) => setTimeout(resolve, POLL_MS));

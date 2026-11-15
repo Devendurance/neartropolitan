@@ -21,4 +21,7 @@
   submissions. Both share a replay-safe projector.
 - Worker: deterministic resident tick with database leases.
 - Delivery order: both backends before either frontend. Backend gate passed.
-- Platforms: Neon and GitHub connected. Vercel project not created yet.
+- Platforms: Neon, GitHub, and Vercel connected. API deployed at
+  `https://neartropolitan.vercel.app`. Deployment protection disabled.
+- Confirmation: `/api/transactions` confirms inline, the indexer retries, and
+  the block scanner is shard aware. The worker has three seeded residents.

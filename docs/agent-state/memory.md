@@ -27,8 +27,13 @@
   `{message, nonce[32], recipient, callbackUrl?}`, then sha256. Verify the
   signature and also query `view_access_key` to confirm FullAccess.
 - The `block` RPC omits transaction lists on testnet. Use `chunk` with
-  `chunk_hash` to read transactions. Scanning all chunks costs ten calls per
-  block, so keep the per-cycle block cap low.
+  `chunk_hash` to read transactions. Calls execute in the contract shard, so
+  learn the shard once per epoch and scan one chunk per block after that.
+- The Vercel team is on the Hobby plan. Cron is limited to daily, so do not
+  add per-minute schedules to `vercel.json`. Player actions confirm inline.
+- Project transactions immediately in `/api/transactions`, with the indexer as
+  a retry backstop. Reconcile operation rows from transaction rows each pass so
+  a crash between the two writes self heals.
 - Neon credentials live in `~/.config/neon/credentials.vps.json`. Use the API
   key with `npx neonctl`. Runtime uses the pooled connection string.
 - Vercel team: `endy-s-winning-szn`. GitHub account: `Devendurance`.

@@ -5,8 +5,8 @@ import { isFailure, nearConfig, provider, txStatus } from "../near/client";
 import { applyEvent, parseEvents } from "./project";
 
 type BlockResponse = {
-  header: { height: number };
-  chunks?: Array<{ chunk_hash: string }>;
+  header: { height: number; epoch_id: string };
+  chunks?: Array<{ chunk_hash: string; shard_id: number }>;
 };
 
 type ChunkResponse = {
@@ -27,12 +27,12 @@ async function latestFinalHeight(): Promise<number> {
 /**
  * Discovers transactions submitted outside the server, for example straight
  * from a wallet. The block endpoint does not include transaction lists, so
- * each chunk is fetched and filtered by receiver. Calls into the contract are
- * queued and their events projected, which makes wallet submissions visible
- * to the read model without a separate indexer service.
+ * chunks are fetched. Any call into the contract executes in the contract's
+ * shard, so the scanner learns that shard once per epoch and then reads a
+ * single chunk per block instead of all ten.
  */
 export async function scanBlocks(options: { maxBlocks?: number } = {}) {
-  const maxBlocks = options.maxBlocks ?? 2;
+  const maxBlocks = options.maxBlocks ?? 10;
   const db = getDb();
   const { contractId, network } = nearConfig();
 
@@ -44,6 +44,8 @@ export async function scanBlocks(options: { maxBlocks?: number } = {}) {
 
   const latest = await latestFinalHeight();
   let last = cursorRows[0]?.lastBlockHeight ?? 0;
+  let contractShard = cursorRows[0]?.contractShard ?? null;
+  let epochId = cursorRows[0]?.epochId ?? null;
 
   if (!cursorRows[0]) {
     // Start at the head instead of replaying all of testnet history.
@@ -67,13 +69,24 @@ export async function scanBlocks(options: { maxBlocks?: number } = {}) {
       block_id: height,
     })) as BlockResponse;
 
-    for (const chunk of block.chunks ?? []) {
+    if (block.header.epoch_id !== epochId) {
+      // Shard assignment is stable inside an epoch only.
+      epochId = block.header.epoch_id;
+      contractShard = null;
+    }
+
+    const candidates = (block.chunks ?? []).filter(
+      (chunk) => contractShard === null || chunk.shard_id === contractShard,
+    );
+
+    for (const chunk of candidates) {
       const detail = (await provider().sendJsonRpc("chunk", {
         chunk_id: chunk.chunk_hash,
       })) as ChunkResponse;
 
       for (const tx of detail.transactions ?? []) {
         if (tx.receiver_id !== contractId) continue;
+        contractShard = chunk.shard_id;
         discovered += 1;
 
         const queued = await db
@@ -129,17 +142,22 @@ export async function scanBlocks(options: { maxBlocks?: number } = {}) {
 
     await db
       .update(indexerCursor)
-      .set({ lastBlockHeight: height, updatedAt: new Date() })
+      .set({
+        lastBlockHeight: height,
+        contractShard,
+        epochId,
+        updatedAt: new Date(),
+      })
       .where(eq(indexerCursor.network, network));
     last = height;
     blocks += 1;
   }
 
   return {
-    from: blocks > 0 ? to - blocks + 1 : last,
     scannedTo: last,
     latest,
     blocks,
+    shard: contractShard,
     transactions: discovered,
     events: projected,
   };

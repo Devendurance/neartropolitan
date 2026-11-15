@@ -37,7 +37,7 @@ Cookie sessions are issued after a NEP-413 signature and a chain check that the 
 | `GET /api/state` | none | Live contract state plus indexer position |
 | `GET /api/history` | cookie | Confirmed trades and operations for the caller |
 | `POST /api/commands` | cookie | Validates an action and returns a prepared contract call |
-| `POST /api/transactions` | cookie | Queues a wallet-submitted transaction for confirmation |
+| `POST /api/transactions` | cookie | Confirms a wallet transaction inline and queues the rest |
 
 ### Sign-in flow
 
@@ -66,7 +66,7 @@ The server never holds player keys. `POST /api/commands` reads live contract sta
 }
 ```
 
-The wallet signs and sends that call. The client then posts the transaction hash to `/api/transactions`, which queues it for the indexer and records the operation as pending.
+The wallet signs and sends that call. The client then posts the transaction hash to `/api/transactions`. The route confirms the transaction inline when the node can see it, projects its events, and marks the operation final. Anything not visible yet stays queued for the indexer.
 
 Validation is advisory. The contract remains authoritative, so a stale read can never grant goods or money.
 
@@ -82,10 +82,11 @@ Events: `deposit`, `starter`, `harvest`, `bake`, `upgrade`, `listing_created`, `
 
 ## Indexing
 
-Two paths feed the read model:
+Three paths feed the read model:
 
-- **Pending poller.** Every transaction registered through `/api/transactions` sits in `transactions` as pending and is polled to finality.
-- **Block scanner.** Wallet transactions that skip the API are discovered by scanning finalized blocks. The block endpoint omits transaction lists, so each chunk is fetched and filtered by receiver. This runs on the same loop as the poller.
+- **Inline confirmation.** `/api/transactions` fetches the receipt immediately after the wallet submits, projects its events, and marks the operation final.
+- **Pending poller.** Anything the inline path could not see stays in `transactions` as pending and is retried to finality.
+- **Block scanner.** Wallet transactions that skip the API are discovered by scanning finalized blocks. The block endpoint omits transaction lists, so chunks are fetched and filtered by receiver. Any call executes in the contract's shard, so the scanner learns that shard once per epoch and then reads one chunk per block instead of ten. A shard change at an epoch boundary resets the learning step.
 
 Both paths share one projector. Trades are deduplicated by `(tx hash, event index)`, and the insert guard also gates the listing decrement, so replay cannot move inventory twice. Confirmed transactions also update their operation row to confirmed with the settled amount.
 
@@ -102,7 +103,7 @@ Both paths share one projector. Trades are deduplicated by `(tx hash, event inde
 | `residents` | NPC policy, price ceiling, spend limit |
 | `ticks` | Worker lease and decision count |
 | `auth_challenges` | Single use NEP-413 nonces |
-| `indexer_cursor` | Last scanned block per network |
+| `indexer_cursor` | Last scanned block, contract shard, and epoch per network |
 
 ## Escrow accounting
 
